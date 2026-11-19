@@ -3,20 +3,27 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, spaces, shared, setShared } from "herdr";
 import { C, MINCHO, MONO, line, motion, fill, cut, unzoom } from "./eva.js";
 import { machine, formatBytes, countdown } from "./machine.js";
+import { nextLoad, signalShape, TRAVEL } from "./signal.js";
 
 // Hundredths for the 活動限界 clock: one lap a second, run natively by frames().
 const CENTI = Array.from({ length: 50 }, (_, i) => `:${String(98 - i * 2).padStart(2, "0")}`);
 
 // Click the field to hold it still; MOTION off stills it too. Kept across restarts.
+// Held or still, it keeps showing the CPU level in its phase.
 const flowing = () => shared("eva.signal") !== false;
 const toggleSignal = () => setShared("eva.signal", !flowing());
 
-const PAD = 0.5, TRAVEL = 0.6, SPAN = 1 + TRAVEL + 2 * PAD;
+// Layers are sized for the farthest slide (level 9), whatever the current level.
+const PAD = 0.5, SPAN = 1 + TRAVEL + 2 * PAD;
 
-function signal(width, height) {
+// CPU load drives the field (signal.js): at level 0 both layers lie still on top of each
+// other; higher, they drift out of phase and slide farther apart. The height stays.
+function signal(width, height, level) {
   const w = Math.max(100, width);
+  const { phase: shift, travel } = signalShape(level);
+  const near = -PAD * w, far = -(PAD + travel) * w;
   const paths = [];
-  for (const [index, color, phase, period] of [[0, C.orange, 0, 42000], [1, "#9a6bd6", 1.8, 57000]]) {
+  for (const [index, color, phase, period, from, to] of [[0, C.orange, 0, 42000, near, far], [1, "#9a6bd6", shift, 57000, far, near]]) {
     const strands = [];
     for (let strand = 0; strand < 24; strand++) {
       // Strands run SPAN field widths, starting PAD before the field, so their ends stay hidden.
@@ -26,14 +33,11 @@ function signal(width, height) {
       });
       strands.push(line(points, color + "b8", 0.7));
     }
-    // The id carries the width so the loop restarts with new bounds after a resize.
-    paths.push(div().id(`signal-wave-${index}-${Math.round(w)}`).absolute().left(-PAD * w).top(0).w(w * SPAN).h(height)
-      .when(motion() && flowing(), el => el.loop("left", {
-        from: index ? -(PAD + TRAVEL) * w : -PAD * w,
-        to: index ? -PAD * w : -(PAD + TRAVEL) * w,
-        period,
-        easing: "ease-in-out",
-      })).children(strands));
+    // The id carries the width and level so the loop restarts with new bounds after a
+    // resize or a level change. Level 0 has nothing to slide: no loop.
+    paths.push(div().id(`signal-wave-${index}-${Math.round(w)}-${level}`).absolute().left(from).top(0).w(w * SPAN).h(height)
+      .when(motion() && flowing() && travel > 0, el => el.loop("left", { from, to, period, easing: "ease-in-out" }))
+      .children(strands));
   }
   for (let i = 0; i <= 8; i++) {
     const x = (i / 8) * w;
@@ -130,6 +134,13 @@ export function commandDeck(view) {
   const blocked = list.filter(a => a.status === "blocked").length;
   const standby = list.filter(a => a.status !== "working" && a.status !== "blocked").length;
   const current = spaces().find(s => s.active);
+  // The deck redraws more often than the host is polled: take each reading once.
+  const reading = machine();
+  if (reading !== view.reading) {
+    view.reading = reading;
+    view.load = nextLoad(view.load, reading?.cpu, Date.now());
+  }
+  const load = `CPU LOAD ${view.load?.mean == null ? "--" : Math.round(view.load.mean)}%`;
   return v_flex().id("command-deck").size_full().bg("#0f0a189e").overflow_hidden().border_b(2).border_color(C.purple)
     .on_size_change((size, cx) => {
       const width = unzoom(size.width);
@@ -152,7 +163,7 @@ export function commandDeck(view) {
       .when(view.deckWidth >= 560, el => el.child(v_flex().flex_1().min_w(0).h_full().min_h(0).py(4).gap(3)
         .child(h_flex().h(10).flex_none().justify_between().text_size(8).font_family(MONO).text_color(C.muted)
           .child(div().child("SIGNAL FIELD / PHASE REFERENCE"))
-          .child(div().child(flowing() ? "SCHEMATIC" : "SCHEMATIC / HOLD")))
+          .child(div().child(flowing() ? load : `${load} / HOLD`)))
         .child(div().id("signal-size").w_full().flex_1().min_h(0).border_y(1).border_color(C.dim)
           .cursor_pointer().on_click(toggleSignal)
           .on_size_change((size, cx) => {
@@ -162,7 +173,7 @@ export function commandDeck(view) {
             view.signalWidth = width;
             view.signalHeight = height;
             cx.notify();
-          }).child(signal(view.signalWidth, view.signalHeight)))
+          }).child(signal(view.signalWidth, view.signalHeight, view.load?.level ?? 0)))
         .child(h_flex().h(10).flex_none().justify_between().text_size(8).font_family(MONO).text_color(C.dim)
           .children(["−4", "−2", "0", "+2", "+4"].map(label => div().child(label))))))
       .when(view.deckWidth < 560, el => el.child(div().flex_1()))

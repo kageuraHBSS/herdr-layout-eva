@@ -31,6 +31,9 @@ export default class WorkspaceChrome extends View {
   init(_props, cx) {
     this.signalWidth = 360;
     this.signalHeight = 90;
+    // The signal field's CPU state (signal.js nextLoad) and the host reading it last took.
+    this.load = null;
+    this.reading = null;
     this.deckWidth = 1600;
     if (props()?.footer) cx.timer.every(1000, (cx) => cx.notify());
     if (props()?.command) {
