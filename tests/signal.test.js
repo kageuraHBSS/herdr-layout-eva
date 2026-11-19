@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cpuLevel, nextLoad, signalShape, LEVELS, TRAVEL, WINDOW, DWELL } from "../mods/eva-chrome/signal.js";
+import { cpuLevel, nextLoad, signalShape, LEVELS, MAX_SHIFT, WINDOW, DWELL } from "../mods/eva-chrome/signal.js";
 
 describe("cpuLevel", () => {
   it("rounds down to 10% steps, 100% in the top level", () => {
@@ -85,23 +85,28 @@ describe("nextLoad", () => {
 });
 
 describe("signalShape", () => {
-  it("is still and in phase at level 0", () => {
-    const shape = signalShape(0);
-    expect(shape.phase).toBe(0);
-    expect(shape.travel).toBe(0);
+  it("is still at full period at level 0", () => {
+    expect(signalShape(0)).toEqual({ shift: 0, tempo: 1 });
   });
 
-  it("is the full slide at level 9", () => {
+  it("swings each layer half the level's percent of the field width", () => {
+    const shape = signalShape(3);
+    expect(shape.shift).toBeCloseTo(0.15);
+    expect(shape.tempo).toBeCloseTo(0.85);
+  });
+
+  it("stays inside the widest swing at the top level", () => {
     const shape = signalShape(LEVELS - 1);
-    expect(shape.phase).toBeCloseTo(1.8);
-    expect(shape.travel).toBeCloseTo(TRAVEL);
+    expect(shape.shift).toBeCloseTo(0.45);
+    expect(shape.shift).toBeLessThanOrEqual(MAX_SHIFT);
+    expect(shape.tempo).toBeCloseTo(0.55);
   });
 
-  it("grows with every level", () => {
+  it("swings wider and faster with every level", () => {
     for (let level = 1; level < LEVELS; level++) {
       const prev = signalShape(level - 1), next = signalShape(level);
-      expect(next.phase).toBeGreaterThan(prev.phase);
-      expect(next.travel).toBeGreaterThan(prev.travel);
+      expect(next.shift).toBeGreaterThan(prev.shift);
+      expect(next.tempo).toBeLessThan(prev.tempo);
     }
   });
 });

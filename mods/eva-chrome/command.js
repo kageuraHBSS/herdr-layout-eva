@@ -3,40 +3,41 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, spaces, shared, setShared } from "herdr";
 import { C, MINCHO, MONO, line, motion, fill, cut, unzoom } from "./eva.js";
 import { machine, formatBytes, countdown } from "./machine.js";
-import { nextLoad, signalShape, TRAVEL } from "./signal.js";
+import { nextLoad, signalShape, MAX_SHIFT } from "./signal.js";
 
 // Hundredths for the 活動限界 clock: one lap a second, run natively by frames().
 const CENTI = Array.from({ length: 50 }, (_, i) => `:${String(98 - i * 2).padStart(2, "0")}`);
 
 // Click the field to hold it still; MOTION off stills it too. Kept across restarts.
-// Held or still, it keeps showing the CPU level in its phase.
+// Held or still, both layers rest where they lie on top of each other.
 const flowing = () => shared("eva.signal") !== false;
 const toggleSignal = () => setShared("eva.signal", !flowing());
 
-// Layers are sized for the farthest slide (level 9), whatever the current level.
-const PAD = 0.5, SPAN = 1 + TRAVEL + 2 * PAD;
+// Layers are sized for the widest swing (MAX_SHIFT each way), plus a margin each side.
+const MARGIN = 0.1, SPAN = 1 + 2 * MAX_SHIFT + 2 * MARGIN;
 
-// CPU load drives the field (signal.js): at level 0 both layers lie still on top of each
-// other; higher, they drift out of phase and slide farther apart. The height stays.
+// CPU load drives the field (signal.js): the two layers swing in opposite directions around
+// the spot where they lie on top of each other, wider and faster as CPU climbs.
 function signal(width, height, level) {
   const w = Math.max(100, width);
-  const { phase: shift, travel } = signalShape(level);
-  const near = -PAD * w, far = -(PAD + travel) * w;
+  const { shift, tempo } = signalShape(level);
+  // Centered, a layer starts MARGIN + MAX_SHIFT before the field, so no strand end shows.
+  const rest = -(MARGIN + MAX_SHIFT) * w, left = rest - shift * w, right = rest + shift * w;
   const paths = [];
-  for (const [index, color, phase, period, from, to] of [[0, C.orange, 0, 42000, near, far], [1, "#9a6bd6", shift, 57000, far, near]]) {
+  for (const [index, color, period, from, to] of [[0, C.orange, 42000, left, right], [1, "#9a6bd6", 57000, right, left]]) {
     const strands = [];
     for (let strand = 0; strand < 24; strand++) {
-      // Strands run SPAN field widths, starting PAD before the field, so their ends stay hidden.
+      // Strands run SPAN field widths from the layer's left edge.
       const points = Array.from({ length: 121 }, (_, i) => {
         const x = i / 120 * SPAN;
-        return [x * w, height / 2 + Math.sin(x * Math.PI * 2 + phase + strand * 0.12) * height * 0.48];
+        return [x * w, height / 2 + Math.sin(x * Math.PI * 2 + strand * 0.12) * height * 0.48];
       });
       strands.push(line(points, color + "b8", 0.7));
     }
-    // The id carries the width and level so the loop restarts with new bounds after a
-    // resize or a level change. Level 0 has nothing to slide: no loop.
-    paths.push(div().id(`signal-wave-${index}-${Math.round(w)}-${level}`).absolute().left(from).top(0).w(w * SPAN).h(height)
-      .when(motion() && flowing() && travel > 0, el => el.loop("left", { from, to, period, easing: "ease-in-out" }))
+    // The id carries the width and level so the loop restarts with new bounds and period
+    // after a resize or a level change. Still (level 0, held, MOTION off): centered.
+    paths.push(div().id(`signal-wave-${index}-${Math.round(w)}-${level}`).absolute().left(rest).top(0).w(w * SPAN).h(height)
+      .when(motion() && flowing() && shift > 0, el => el.loop("left", { from, to, period: period * tempo, easing: "ease-in-out" }))
       .children(strands));
   }
   for (let i = 0; i <= 8; i++) {

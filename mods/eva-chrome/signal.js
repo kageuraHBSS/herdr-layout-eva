@@ -1,10 +1,12 @@
 // How the command deck's signal field follows CPU load. Pure, so tests run without Herdr.
-// Ten 10% levels: at 0 both layers sit still on top of each other; at 9 they are out of
-// phase and slide the full distance apart. The wave height never changes.
+// Ten 10% levels. The layers swing in opposite directions around the spot where they lie
+// on top of each other, so at n% CPU they drift up to ±n% of the field width apart, and
+// faster as CPU climbs. At level 0 they lie still on top of each other.
 
 export const LEVELS = 10;
-// The farthest a layer slides, in field widths (level 9). The layers are sized for it.
-export const TRAVEL = 0.6;
+// How far one layer swings to each side at 100%, in field widths: half the ±100% the two
+// drift apart. The layers are sized for it.
+export const MAX_SHIFT = 0.5;
 // Step down only once CPU is this many points under the level's floor, so a reading
 // hovering on a boundary doesn't restart the loop (and jump the waves) every poll.
 const HYSTERESIS = 3;
@@ -38,9 +40,9 @@ export function nextLoad(load, cpu, now) {
   return { samples, mean, level: change ? level : last.level, changedAt: change ? now : last.changedAt };
 }
 
-// The purple layer's phase (the orange one stays at 0) and each layer's slide (field
-// widths), linear from level 0 to level 9.
+// A level stands for its floor, level × 10%. Each layer swings ±shift field widths, and
+// the loop periods scale by tempo: whole at 0%, half at 100%.
 export function signalShape(level) {
-  const k = level / (LEVELS - 1);
-  return { phase: 1.8 * k, travel: TRAVEL * k };
+  const load = level / LEVELS;
+  return { shift: MAX_SHIFT * load, tempo: 1 - load / 2 };
 }
