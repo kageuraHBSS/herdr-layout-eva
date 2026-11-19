@@ -10,6 +10,9 @@ import { startSync, syncRate, transcriptStats, agentVersion, formatSize } from "
 
 const DIGITAL = "Digital-7 Mono";
 const STATES = ["working", "done", "idle", "blocked"];
+// A working card's breath (ms, there and back) and the ticker above its 同調率.
+const BREATH = 1600;
+const TICKER = ["▶▷▷▷", "▷▶▷▷", "▷▷▶▷", "▷▷▷▶"];
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -270,6 +273,17 @@ export default class Agents extends View {
     const frame = blocked
       ? [...hazard(shape), div().absolute().top(5).left(5).w(w - 10).h(h - 10).child(fill(cut(w - 10, h - 10, { tr: 11, br: 11 }), "#120808"))]
       : [fill(shape, a.focused ? "#1c1230f0" : "#110c1acc"), stroke(shape, a.focused ? C.orange : "#6b3fa0aa", a.focused ? 1.5 : 1)];
+    // Working: a green inner frame, inside the orange focus outline, and the gauge's
+    // leading cell breathe together; a ticker runs above 同調率. MOTION off leaves them lit and drops the ticker.
+    const working = a.status === "working";
+    const breathe = (el) => el.when(motion(), (d) => d.loop("opacity", { from: 0.25, to: 1, period: BREATH }));
+    const active = working
+      ? [breathe(div().id(`work-${a.address}`).absolute().top(3).left(3).w(w - 6).h(h - 6))
+        .child(stroke(cut(w - 6, h - 6, { tr: 12, br: 12 }), C.green + "aa"))]
+      : [];
+    const ticker = working && motion()
+      ? div().font_family(MONO).text_size(9).line_height(1).text_color(C.green).frames(TICKER, 160)
+      : null;
     const since = div().flex_none().font_family(MONO).text_size(10).line_height(1).text_color(C.dim)
       .child(when ? `T+${duration(now - when)}` : "");
     const corner = this.hovered === a.address ? pin : since;
@@ -288,6 +302,7 @@ export default class Agents extends View {
     const host = div().flex_none().text_size(9).text_color(C.dim).child(machine ?? "");
     const gauge = h_flex().h(big ? 9 : 6).mt(3).flex_none().gap(3)
       .children(Array.from({ length: 10 }, (_, i) => div().flex_1().h_full()
+        .when(working && i === cells - 1, el => breathe(el.id(`tip-${a.address}`)))
         .when(i < cells, el => el.bg(tone))
         .when(i >= cells, el => el.border(1).border_color(tone + "55"))));
     // Blocked, the number gives way to a blinking 警告; the gauge still shows the rate.
@@ -312,7 +327,7 @@ export default class Agents extends View {
         cx.notify();
       })
       .on_click(() => run("pane.focus", { pane: a.pane }))
-      .children(frame);
+      .children([...frame, ...active]);
     const g = big ? 9 : 6;
     const col = w - 36;
     const rh = inner - 18 - 20 - 15 - g;
@@ -322,7 +337,9 @@ export default class Agents extends View {
     // on tall cards it otherwise sits above it; short narrow cards go without.
     const label = !blocked && fit(true) >= cap;
     const above = !blocked && !label && big;
-    const size = Math.min(cap, fit(label), above ? rh - 15 : Infinity);
+    // Above the number, the ticker takes its row from the number's height.
+    const lift = above && ticker ? 12 : 0;
+    const size = Math.min(cap, fit(label), above ? rh - 15 - lift : Infinity);
     // Claude Code only: compactions so far and the transcript's size, on every card
     // (idle ones are the ones people look at). Muted, no gauge: when auto-compact fires isn't known.
     const counts = transcriptStats(a.address);
@@ -342,11 +359,13 @@ export default class Agents extends View {
           .when(Boolean(records), el => el.child(h_flex().flex_none().gap(7).children(records ?? [])))
           .child(this.tabs(status, col >= 400)))
         .child(div().flex_1())
+        .when(above && Boolean(ticker), el => el.child(ticker))
         .when(above, el => el.child(h_flex().h(12).flex_none().gap(6).items_end()
           .child(div().font_family(MINCHO).font_weight(700).text_size(12).line_height(1).text_color(C.white).child("同調率"))
           .child(div().text_size(8).font_weight(700).line_height(1).text_color(C.orange).child("SYNC RATE"))))
-        .child(h_flex().h(above ? rh - 15 : rh).flex_none().gap(8).items_end().min_w(0)
+        .child(h_flex().h(above ? rh - 15 - lift : rh).flex_none().gap(8).items_end().min_w(0)
           .when(label, el => el.child(v_flex().w(46).flex_none().pb(3).gap(3).line_height(1)
+            .when(Boolean(ticker), el => el.child(ticker))
             .child(div().font_family(MINCHO).font_weight(700).text_size(12).text_color(C.white).child("同調率"))
             .child(div().text_size(8).font_weight(700).text_color(C.orange).child("SYNC RATE"))))
           .child(h_flex().flex_1().min_w(0).justify_end().child(number(size))))
