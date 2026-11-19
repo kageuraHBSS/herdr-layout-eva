@@ -4,7 +4,7 @@
 // Adapted from FunnyQ/herdr-layout-p5's sp-context.js.
 //
 // Reads: ~/.claude/sessions/<pid>.json, the session's jsonl (its last few MB,
-// plus a compaction count over bytes appended since the last poll), ~/.claude/settings.json; for Codex, ~/.codex/state_*.sqlite and its
+// its size, and its first lines once per new session), ~/.claude/settings.json; for Codex, ~/.codex/state_*.sqlite and its
 // rollout file; for OpenCode, ~/.local/share/opencode/opencode.db (read-only)
 // and ~/.cache/opencode/models.json. Runs pgrep, ps, lsof, sqlite3, grep, jq,
 // and `claude --version` (every 10 min) to flag Claude Code sessions older than
@@ -18,6 +18,7 @@ const CLAUDE_WINDOW = 1000000;
 const rates = new Map();
 const stats = new Map();
 const versions = new Map();
+const keys = new Map();
 
 const rows = (text) =>
   text.split("\n").flatMap((line) => {
@@ -74,12 +75,24 @@ export function opencodeRate(tokens, window) {
   return left(used, window);
 }
 
-// Each compaction writes one system line; tool output that merely mentions the
-// subtype is escaped inside a string, and a line cut by a scan window doesn't parse.
-export const countCompacts = (text) =>
-  rows(text).filter(
-    (r) => r.type === "system" && r.subtype === "compact_boundary",
-  ).length;
+// A /clear through an hbss-handover handover: its SessionStart hook adds the
+// handover as context starting with [HANDOVER RESUME], near the top of the new
+// transcript. When it was added (ms), or null. Parsed, not grepped: tool output
+// that merely mentions the marker is escaped inside a string.
+const RESUME = "[HANDOVER RESUME]";
+export function handoverResumedAt(text) {
+  const row = rows(text).find(
+    (r) =>
+      r.type === "attachment" &&
+      r.attachment?.type === "hook_additional_context" &&
+      r.attachment.hookEvent === "SessionStart" &&
+      [r.attachment.content]
+        .flat()
+        .some((c) => typeof c === "string" && c.startsWith(RESUME)),
+  );
+  const at = Date.parse(row?.timestamp);
+  return Number.isFinite(at) ? at : null;
+}
 
 export function formatSize(bytes) {
   const k = bytes / 1024;
@@ -135,43 +148,68 @@ async function lastMatching(file, needle, parse) {
   return null;
 }
 
-// Compactions and transcript size, scanning only the bytes appended since the last
-// poll. The file only grows; a smaller size means a new file, so scan it whole.
-// The whole-file scan is a plain grep (BSD `head -c` is ~5x slower) with exec's
-// longest timeout: a 4.6 GB transcript takes about 40 s. If even that fails, the
-// file shows no count rather than rescanning every poll.
-const COMPACT = '"subtype":"compact_boundary"';
-const FIRST_SCAN = 600000;
-const scans = new Map();
-export async function transcript(file) {
-  const size = Number(await sh("stat", ["-f", "%z", file]));
-  if (!size) return null;
-  const seen = scans.get(file);
-  if (seen?.compacts === null) return { compacts: null, bytes: size };
-  if (seen?.size === size) return { compacts: seen.compacts, bytes: size };
-  const from = seen && size > seen.size ? seen.size : 0;
+// Handover restarts per Claude Code process (`<pid>:<startedAt>`): a /clear keeps
+// the process and changes its sessionId, and no file links the new session to the
+// old one, so the count is what this mod has seen, kept in localStorage across
+// Herdr restarts. A changed sessionId counts when the new transcript opens with a
+// handover added after the old session was first seen; an earlier one is a
+// /resume into an old session. Several copies of this mod poll at once and share
+// these maps, so a change being checked is marked before the await.
+const KEEP = 30 * 86400000;
+const checking = new Set();
+let records = null;
+function loadRecords() {
+  if (records) return records;
   try {
-    const text = from
-      ? await sh("sh", [
-          "-c",
-          'tail -c +"$1" "$2" | head -c "$3" | grep -F -- "$4" || true',
-          "sh",
-          String(from + 1),
-          file,
-          String(size - from),
-          COMPACT,
-        ])
-      : await sh("sh", ["-c", 'grep -F -- "$1" "$2" || true', "sh", COMPACT, file], {
-          timeout: FIRST_SCAN,
-        });
-    const compacts = (from ? seen.compacts : 0) + countCompacts(text);
-    scans.set(file, { size, compacts });
-    return { compacts, bytes: size };
+    records = JSON.parse(globalThis.localStorage?.getItem("restarts") ?? "{}");
   } catch {
-    if (from) return { compacts: seen.compacts, bytes: size };
-    scans.set(file, { size, compacts: null });
-    return { compacts: null, bytes: size };
+    records = {};
   }
+  if (!records || typeof records !== "object" || Array.isArray(records))
+    records = {};
+  return records;
+}
+const saveRecords = () =>
+  globalThis.localStorage?.setItem("restarts", JSON.stringify(records));
+
+export async function restarts(key, sessionId, file, now = Date.now()) {
+  const all = loadRecords();
+  const seen = all[key];
+  if (!seen) {
+    all[key] = { sessionId, since: now, restarts: 0 };
+    saveRecords();
+    return 0;
+  }
+  const mark = `${key}/${sessionId}`;
+  if (seen.sessionId === sessionId || checking.has(mark)) return seen.restarts;
+  checking.add(mark);
+  try {
+    // The handover context lands before the first user line, and a new file can
+    // exist a few seconds before either: a head with neither (or no file yet) is
+    // still being written, so the record waits for the next poll.
+    const head = await sh("head", ["-n", "30", file]);
+    const at = handoverResumedAt(head);
+    if (at == null && !rows(head).some((r) => r.type === "user"))
+      return seen.restarts;
+    const count = seen.restarts + (at != null && at > seen.since ? 1 : 0);
+    all[key] = { sessionId, since: now, restarts: count };
+    saveRecords();
+    return count;
+  } finally {
+    checking.delete(mark);
+  }
+}
+
+// Records of processes no terminal runs, once their session is a month old (right
+// after a start no terminal is listed yet).
+function pruneRecords(live, now = Date.now()) {
+  const all = loadRecords();
+  const stale = Object.keys(all).filter(
+    (k) => !live.has(k) && now - all[k].since > KEEP,
+  );
+  if (!stale.length) return;
+  for (const k of stale) delete all[k];
+  saveRecords();
 }
 
 // Herdr starts agents inside an interactive shell (sometimes a login shell
@@ -198,8 +236,13 @@ async function claude(pid, address) {
   const settings = JSON.parse(
     (await readTextFile(`${home()}/.claude/settings.json`)) ?? "{}",
   );
-  const counts = await transcript(file).catch(() => null);
-  counts ? stats.set(address, counts) : stats.delete(address);
+  const key = session.startedAt ? `${pid}:${session.startedAt}` : String(pid);
+  keys.set(address, key);
+  const count = await restarts(key, session.sessionId, file).catch(() => null);
+  const bytes = Number(await sh("stat", ["-f", "%z", file]).catch(() => 0));
+  count != null && bytes
+    ? stats.set(address, { restarts: count, bytes })
+    : stats.delete(address);
   return lastMatching(file, '"usage"', (text) => claudeRate(text, settings));
 }
 
@@ -318,8 +361,8 @@ const READERS = { claude, codex, opencode };
 /** The agent's sync rate (0–100), or null when unknown. */
 export const syncRate = (address) => rates.get(address) ?? null;
 
-/** A Claude Code agent's compaction count and transcript bytes, or null. */
-export const transcriptStats = (address) => stats.get(address) ?? null;
+/** A Claude Code agent's handover restarts and transcript bytes, or null. */
+export const sessionStats = (address) => stats.get(address) ?? null;
 
 /** A Claude Code agent's version, and whether the installed CLI is newer; or null. */
 export function agentVersion(address) {
@@ -347,9 +390,10 @@ async function poll() {
     }
   }
   const alive = new Set(live.map((t) => t.address));
-  for (const map of [rates, stats, versions])
+  for (const map of [rates, stats, versions, keys])
     for (const address of map.keys())
       if (!alive.has(address)) map.delete(address);
+  pruneRecords(new Set(keys.values()));
 }
 
 export function startSync(cx) {

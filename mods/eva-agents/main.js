@@ -6,7 +6,7 @@ import { agents, terminals, panes, focused, spaces, run, theme, shared, setShare
 // setBadge arrived in Herdr 0.1.16: a named import would fail to load on older versions.
 import * as herdr from "herdr";
 import { C, MINCHO, MONO, TONE, LABEL, cut, fill, stroke, line, hazard, blink, motion, unzoom } from "./eva.js";
-import { startSync, syncRate, transcriptStats, agentVersion, formatSize } from "./sync.js";
+import { startSync, syncRate, sessionStats, agentVersion, formatSize } from "./sync.js";
 
 const DIGITAL = "Digital-7 Mono";
 const STATES = ["working", "done", "idle", "blocked"];
@@ -103,22 +103,28 @@ export default class Agents extends View {
     this.width = 304;
     startSync(cx);
     this.announced = new Set();
+    this.restarts = new Map();
     this.bornAt = Date.now();
   }
 
-  // 作戦開始 for each new top-level agent. Agents seen in the first seconds
-  // after load were already running, so they only get remembered.
+  // 作戦開始 for each new top-level agent, 再起動 each time one's Claude Code
+  // session restarts through a handover. Agents seen in the first seconds after
+  // load were already running, so they only get remembered.
   announce(list, all) {
     const settling = Date.now() - this.bornAt < 3000;
     const parentOf = new Map(all.map(t => [t.address, t.parent]));
     for (const a of list) {
-      if (this.announced.has(a.address)) continue;
+      const fresh = !this.announced.has(a.address);
       this.announced.add(a.address);
-      if (settling || !motion() || parentOf.get(a.address)) continue;
+      const restarts = sessionStats(a.address)?.restarts;
+      const before = this.restarts.get(a.address);
+      if (restarts != null) this.restarts.set(a.address, restarts);
+      const restarted = !fresh && before != null && restarts > before;
+      if (!(fresh || restarted) || settling || !motion() || parentOf.get(a.address)) continue;
       const index = panes().filter(p => p.tab === a.tab).findIndex(p => p.pane === a.pane) + 1;
       openOverlay({
         mod: "eva-launch", kind: "window", width: 1, height: 1, at: { x: 0, y: 0 }, frame: "none",
-        props: { name: a.space_name, program: a.program?.name, pane: index || null },
+        props: { name: a.space_name, program: a.program?.name, pane: index || null, restart: restarted },
       });
     }
   }
@@ -340,13 +346,13 @@ export default class Agents extends View {
     // Above the number, the ticker takes its row from the number's height.
     const lift = above && ticker ? 12 : 0;
     const size = Math.min(cap, fit(label), above ? rh - 15 - lift : Infinity);
-    // Claude Code only: compactions so far and the transcript's size, on every card
-    // (idle ones are the ones people look at). Muted, no gauge: when auto-compact fires isn't known.
-    const counts = transcriptStats(a.address);
+    // Claude Code only: handover restarts so far and the transcript's size, on every
+    // card (idle ones are the ones people look at). Muted.
+    const counts = sessionStats(a.address);
     const record = (kanji, text) => h_flex().gap(4).items_end().line_height(1)
       .child(div().font_family(MINCHO).font_weight(700).text_size(9).text_color(C.muted).child(kanji))
       .child(div().font_family(MONO).text_size(9).text_color(C.muted).child(text));
-    const records = counts && [record("圧縮", counts.compacts == null ? "--" : String(counts.compacts).padStart(2, "0")), record("記録", formatSize(counts.bytes))];
+    const records = counts && [record("再起動", String(counts.restarts).padStart(2, "0")), record("記録", formatSize(counts.bytes))];
     // The session's CLI version beside T+, orange once the installed claude is newer (restart to update).
     const version = agentVersion(a.address);
     const tag = version && div().flex_none().font_family(MONO).text_size(10).line_height(1)

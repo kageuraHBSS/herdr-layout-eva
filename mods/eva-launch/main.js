@@ -1,5 +1,6 @@
-// 作戦開始: a full-window card played once when a new agent starts.
-// Opened by eva-agents with props { name, pane }; closes itself after about
+// 作戦開始: a full-window card played once when a new agent starts; with
+// props.restart, 再起動 when its Claude Code session restarts through a handover.
+// Opened by eva-agents with props { name, program, pane, restart }; closes itself after about
 // 1.8 s, or on click. eva-agents skips it while MOTION is off.
 // Layout is flex-centred: on_size_change reports unzoomed px, so px offsets
 // drift off-centre at any zoom but 1.
@@ -145,7 +146,7 @@ export default class Launch extends View {
                   .text_size(big)
                   .line_height(1)
                   .text_color(C.white)
-                  .child("作戦開始"),
+                  .child(p.restart ? "再起動" : "作戦開始"),
               )
               .child(
                 h_flex()
@@ -156,7 +157,7 @@ export default class Launch extends View {
                       .text_size(Math.max(12, big * 0.13))
                       .font_weight(700)
                       .text_color(ACCENT)
-                      .child("OPERATION START"),
+                      .child(p.restart ? "RESTART" : "OPERATION START"),
                   )
                   .child(
                     div()

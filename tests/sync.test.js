@@ -4,7 +4,7 @@ import {
   codexRate,
   opencodeRate,
   elapsedMs,
-  countCompacts,
+  handoverResumedAt,
   formatSize,
   claudeVersion,
   isOlder,
@@ -95,30 +95,43 @@ describe("elapsedMs", () => {
   });
 });
 
-describe("countCompacts", () => {
-  it("只算真正的 compact_boundary 系統訊息", () => {
-    const text = [
-      line({
-        type: "system",
-        subtype: "compact_boundary",
-        compactMetadata: { trigger: "auto", preTokens: 414391 },
-      }),
-      line({
-        type: "user",
-        message: { content: 'grep "subtype":"compact_boundary"' },
-      }),
-      line({
-        type: "system",
-        subtype: "compact_boundary",
-        compactMetadata: { trigger: "manual" },
-      }),
-      '{"type":"system","subtype":"compact_bou', // a line cut by the scan window
-    ].join("\n");
-    expect(countCompacts(text)).toBe(2);
+describe("handoverResumedAt", () => {
+  const resume = (content, attachment = {}) =>
+    line({
+      type: "attachment",
+      timestamp: "2026-11-19T21:43:18.555Z",
+      attachment: {
+        type: "hook_additional_context",
+        content,
+        hookName: "SessionStart",
+        hookEvent: "SessionStart",
+        ...attachment,
+      },
+    });
+  const clear = line({
+    type: "system",
+    subtype: "local_command",
+    commandRun: { command: "clear", args: "" },
   });
 
-  it("沒有就是 0", () => {
-    expect(countCompacts("")).toBe(0);
+  it("returns when the handover was added", () => {
+    const text = [clear, resume(["[HANDOVER RESUME] セッションがクリアされた。"])].join("\n");
+    expect(handoverResumedAt(text)).toBe(Date.parse("2026-11-19T21:43:18.555Z"));
+  });
+
+  it("is null for a plain /clear", () => {
+    expect(handoverResumedAt(clear)).toBeNull();
+    expect(handoverResumedAt("")).toBeNull();
+  });
+
+  it("ignores the marker inside tool output and other hooks' context", () => {
+    const text = [
+      line({ type: "user", message: { content: "[HANDOVER RESUME] quoted" } }),
+      resume(["something else [HANDOVER RESUME]"]),
+      resume(["[HANDOVER RESUME] from another event"], { hookEvent: "UserPromptSubmit" }),
+      '{"type":"attachment","attachment":{"type":"hook_additional_con', // a cut line
+    ].join("\n");
+    expect(handoverResumedAt(text)).toBeNull();
   });
 });
 
