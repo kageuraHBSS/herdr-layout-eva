@@ -1,7 +1,7 @@
 // 作戦開始: a full-window card played once when a new agent starts; with
 // props.restart, 再起動 when its Claude Code session restarts through a handover.
-// Opened by eva-agents with props { name, program, pane, restart }; closes itself after about
-// 1.8 s, or on click. eva-agents skips it while MOTION is off.
+// Opened by eva-agents with props { name, program, pane, restart }; closes itself 5 s after it
+// appears, or on click. eva-agents skips it while MOTION is off.
 // Layout is flex-centred: on_size_change reports unzoomed px, so px offsets
 // drift off-centre at any zoom but 1.
 
@@ -14,8 +14,8 @@ import { C, MINCHO, MONO, fill, unzoom } from "./eva.js";
 const ACCENT = C.white;
 
 const IN = 320, // bands and title arrive
-  HOLD = 1150, // then stay this long
-  OUT = 300, // then fade
+  SHOWN = 5000, // on screen from arrival to close
+  OUT = 300, // the last of SHOWN, fading
   BAND = 22;
 
 // Accent-and-ink stripes clipped to the polygon.
@@ -32,7 +32,7 @@ export default class Launch extends View {
       await cx.sleep(16);
       this.stage = 1;
       cx.notify();
-      await cx.sleep(IN + HOLD);
+      await cx.sleep(SHOWN - OUT);
       this.stage = 2;
       cx.notify();
       await cx.sleep(OUT);

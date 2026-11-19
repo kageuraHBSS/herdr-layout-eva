@@ -22,7 +22,7 @@ All art is original vector work. It recreates a mood (colors, type, shapes), not
   - `eva-pane`: the slanted pane header.
   - `eva-status`: the status bar, with the agent count, NEEDS YOU and the MOTION toggle. MOTION off stills every animation: the signal field, the working cards' pulse and ticker, and the warning blink.
   - `eva-files`, `eva-changes`: the 資料 FILES and 変更 CHANGES panels.
-  - `eva-launch`: the 作戦開始 card `eva-agents` opens over the window when a new agent starts, or 再起動 when a Claude Code agent restarts through a handover. It shows for about 1.8 seconds, doesn't take the keyboard, and closes on click. MOTION off skips it.
+  - `eva-launch`: the 作戦開始 card `eva-agents` opens over the window when a new agent starts, or 再起動 when a Claude Code agent restarts through a handover. It shows for 5 seconds, doesn't take the keyboard, and closes on click. MOTION off skips it.
   - `eva-toast`: notifications, picked by the layout's `"toast": "eva-toast"`. A cut-corner plate shows the level: 警告 (red, blinking) for errors and agents that need you, 注意 (red) for warnings, 完了 (green) for success, 通報 (purple) for everything else. Click one to run its action, such as going to the agent, and close it.
   - `eva-switch`: a card near the top center that names where focus went when you switch space (区画移行) or move to another agent (接続切替): the space name, the agent's program, status and title, between two sliding hazard bands. It fades after about 1.4 seconds, and a click closes it early. It runs from a 0px block in the layout.
 
